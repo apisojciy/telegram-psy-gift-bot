@@ -1,15 +1,16 @@
 import asyncio
-from aiogram import Bot, Dispatcher, types, F # Додано F
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart # Text видалено звідси
+from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message # Явний імпорт Message
+from aiogram.types import Message
+from aiogram.client.default import DefaultBotProperties # !!! ДОДАНО ЦЕЙ ІМПОРТ !!!
 
 # --- Конфігурація бота ---
 API_TOKEN = '7588127606:AAGscvK5SeIdZ3Qsx_oNzR4cK0A6njFD9mM'
-# Змінено на числовий ID, як ми обговорювали
-YOUR_TELEGRAM_CHAT_ID = 1234567890 # ЗАМІНІТЬ ЦЕ НА ВАШ ЧИСЛОВИЙ ID !!!
+# ЗАМІНІТЬ ЦЕ НА ВАШ ЧИСЛОВИЙ ID !!! (наприклад, 1234567890)
+YOUR_TELEGRAM_CHAT_ID = 1234567890
 
 # Список психологів з гіперпосиланнями
 PSYCHOLOGISTS = {
@@ -18,7 +19,8 @@ PSYCHOLOGISTS = {
     "Шкварок Наталія Борисівна": "https://uccbt.com.ua/specialists/shkvarok-nataliya-borysivna/",
 }
 
-bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
+# !!! ЗМІНЕНО ІНІЦІАЛІЗАЦІЮ BOT !!!
+bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 # --- Створення станів для FSM (Finite State Machine) ---
@@ -30,7 +32,7 @@ class CourseStates(StatesGroup):
 
 # --- Обробник команди /start ---
 @dp.message(CommandStart())
-async def send_welcome(message: Message, state: FSMContext): # Тип змінено на Message
+async def send_welcome(message: Message, state: FSMContext):
     keyboard = types.ReplyKeyboardMarkup(
         keyboard=[
             [types.KeyboardButton(text="Готова розпочати курс")]
@@ -45,9 +47,8 @@ async def send_welcome(message: Message, state: FSMContext): # Тип зміне
     await state.set_state(CourseStates.waiting_for_start_confirmation)
 
 # --- Обробник згоди розпочати курс ---
-# Змінено фільтр з Text на F.text
 @dp.message(CourseStates.waiting_for_start_confirmation, F.text == "Готова розпочати курс")
-async def process_start_confirmation(message: Message, state: FSMContext): # Тип змінено на Message
+async def process_start_confirmation(message: Message, state: FSMContext):
     keyboard_builder = types.InlineKeyboardBuilder()
     for name, url in PSYCHOLOGISTS.items():
         keyboard_builder.row(types.InlineKeyboardButton(text=name, url=url, callback_data=f"select_psy_{name}"))
@@ -60,7 +61,7 @@ async def process_start_confirmation(message: Message, state: FSMContext): # Т�
     await state.set_state(CourseStates.waiting_for_psychologist_choice)
 
 # --- Обробник вибору психолога через inline-кнопки ---
-@dp.callback_query(F.data.startswith("select_psy_"), CourseStates.waiting_for_psychologist_choice) # Змінено фільтр
+@dp.callback_query(F.data.startswith("select_psy_"), CourseStates.waiting_for_psychologist_choice)
 async def process_psychologist_selection(callback_query: types.CallbackQuery, state: FSMContext):
     selected_option = callback_query.data.replace("select_psy_", "")
 
@@ -84,7 +85,7 @@ async def process_psychologist_selection(callback_query: types.CallbackQuery, st
 
 # --- Обробник введення власного варіанту психолога ---
 @dp.message(CourseStates.waiting_for_custom_psychologist)
-async def process_custom_psychologist(message: Message, state: FSMContext): # Тип змінено на Message
+async def process_custom_psychologist(message: Message, state: FSMContext):
     custom_input = message.text
     # Проста валідація, можна додати більш складну
     if " - " in custom_input and len(custom_input.split(" - ")) == 2:
@@ -107,7 +108,7 @@ async def process_custom_psychologist(message: Message, state: FSMContext): # Т
         await message.answer("Будь ласка, введи ім'я та посилання на твого психолога у форматі: 'Ім'я Психолога - Посилання'.")
 
 # --- Обробник підтвердження/зміни вибору ---
-@dp.callback_query(F.data == "confirm_choice", CourseStates.waiting_for_final_confirmation) # Змінено фільтр
+@dp.callback_query(F.data == "confirm_choice", CourseStates.waiting_for_final_confirmation)
 async def confirm_choice(callback_query: types.CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     chosen_psychologist = user_data.get("chosen_psychologist")
@@ -119,7 +120,6 @@ async def confirm_choice(callback_query: types.CallbackQuery, state: FSMContext)
         psy_info_for_you = f"Дівчина обрала свого психолога: {chosen_psychologist}"
 
     # Надсилаємо повідомлення вам
-    # YOUR_TELEGRAM_CHAT_ID має бути числовим ID
     await bot.send_message(chat_id=YOUR_TELEGRAM_CHAT_ID, text=psy_info_for_you, parse_mode=ParseMode.HTML)
 
     # Тепер надсилаємо повідомлення дівчині
@@ -129,7 +129,7 @@ async def confirm_choice(callback_query: types.CallbackQuery, state: FSMContext)
     await state.clear() # Очищаємо стан після завершення процесу
     await callback_query.answer()
 
-@dp.callback_query(F.data == "change_choice", CourseStates.waiting_for_final_confirmation) # Змінено фільтр
+@dp.callback_query(F.data == "change_choice", CourseStates.waiting_for_final_confirmation)
 async def change_choice(callback_query: types.CallbackQuery, state: FSMContext):
     keyboard_builder = types.InlineKeyboardBuilder()
     for name, url in PSYCHOLOGISTS.items():

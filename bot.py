@@ -1,36 +1,61 @@
 import asyncio
+import os # Новий імпорт для роботи зі змінними середовища
+from aiohttp import web # Новий імпорт для вбудованого веб-сервера
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
-from aiogram.client.default import DefaultBotProperties # !!! ДОДАНО ЦЕЙ ІМПОРТ !!!
+from aiogram.client.default import DefaultBotProperties
 
 # --- Конфігурація бота ---
 API_TOKEN = '7588127606:AAGscvK5SeIdZ3Qsx_oNzR4cK0A6njFD9mM'
-# ЗАМІНІТЬ ЦЕ НА ВАШ ЧИСЛОВИЙ ID !!! (наприклад, 1234567890)
-YOUR_TELEGRAM_CHAT_ID = 1234567890
+# !!! ОБОВ'ЯЗКОВО ЗАМІНІТЬ ЦЕ НА ВАШ ЧИСЛОВИЙ TELEGRAM ID !!!
+YOUR_TELEGRAM_CHAT_ID = 1234567890 # Наприклад: 1234567890
 
-# Список психологів з гіперпосиланнями
+# --- Конфігурація Webhook ---
+WEBHOOK_PATH = "/webhook" # Шлях, за яким бот буде приймати оновлення
+# !!! ОБОВ'ЯЗКОВО ЗГЕНЕРУЙТЕ ТА ВСТАНОВІТЬ ЦЕ ЯК ЗМІННУ СЕРЕДОВИЩА НА RENDER !!!
+# Це секретний токен для перевірки, що запит прийшов від Telegram, а не від когось іншого.
+# В коді ми отримуємо його з змінної середовища WEBHOOK_SECRET.
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
+
+# Render автоматично надає ім'я хоста вашого розгорнутого сервісу через цю змінну середовища.
+RENDER_EXTERNAL_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+
+# Перевірка, чи встановлені необхідні змінні середовища
+if not WEBHOOK_SECRET:
+    raise ValueError("WEBHOOK_SECRET environment variable is not set! Please define it on Render.")
+if not RENDER_EXTERNAL_HOSTNAME:
+    # Ця гілка має активуватися лише під час локального тестування без Render env vars.
+    # Для розгортання на Render RENDER_EXTERNAL_HOSTNAME ОБОВ'ЯЗКОВО має бути встановлений.
+    raise RuntimeError("RENDER_EXTERNAL_HOSTNAME environment variable is not set. This bot is configured for Render deployment.")
+
+# Формуємо повний URL для вебхука. Render надає HTTPS.
+WEBHOOK_URL = f"https://{RENDER_EXTERNAL_HOSTNAME}{WEBHOOK_PATH}"
+
+# Список психологів з гіперпосиланнями (залишається без змін)
 PSYCHOLOGISTS = {
     "Ткаченко Юлія Леонідівна": "https://doc.ua/ua/doctor/kiev/22001-yuliya-tkachenko/about",
     "Ольга Сергієнко": "https://k-s.org.ua/branches/team/olga-sergiyenko/",
     "Шкварок Наталія Борисівна": "https://uccbt.com.ua/specialists/shkvarok-nataliya-borysivna/",
 }
 
-# !!! ЗМІНЕНО ІНІЦІАЛІЗАЦІЮ BOT !!!
+# Ініціалізація бота та диспетчера
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-# --- Створення станів для FSM (Finite State Machine) ---
+# --- Створення станів для FSM (Finite State Machine) - залишається без змін ---
 class CourseStates(StatesGroup):
     waiting_for_start_confirmation = State()
     waiting_for_psychologist_choice = State()
     waiting_for_custom_psychologist = State()
     waiting_for_final_confirmation = State()
 
-# --- Обробник команди /start ---
+# --- Обробники повідомлень та колбеків - залишаються без змін ---
+
 @dp.message(CommandStart())
 async def send_welcome(message: Message, state: FSMContext):
     keyboard = types.ReplyKeyboardMarkup(
@@ -46,7 +71,6 @@ async def send_welcome(message: Message, state: FSMContext):
     )
     await state.set_state(CourseStates.waiting_for_start_confirmation)
 
-# --- Обробник згоди розпочати курс ---
 @dp.message(CourseStates.waiting_for_start_confirmation, F.text == "Готова розпочати курс")
 async def process_start_confirmation(message: Message, state: FSMContext):
     keyboard_builder = types.InlineKeyboardBuilder()
@@ -60,7 +84,6 @@ async def process_start_confirmation(message: Message, state: FSMContext):
     )
     await state.set_state(CourseStates.waiting_for_psychologist_choice)
 
-# --- Обробник вибору психолога через inline-кнопки ---
 @dp.callback_query(F.data.startswith("select_psy_"), CourseStates.waiting_for_psychologist_choice)
 async def process_psychologist_selection(callback_query: types.CallbackQuery, state: FSMContext):
     selected_option = callback_query.data.replace("select_psy_", "")
@@ -83,15 +106,11 @@ async def process_psychologist_selection(callback_query: types.CallbackQuery, st
         await state.set_state(CourseStates.waiting_for_final_confirmation)
     await callback_query.answer()
 
-# --- Обробник введення власного варіанту психолога ---
 @dp.message(CourseStates.waiting_for_custom_psychologist)
 async def process_custom_psychologist(message: Message, state: FSMContext):
     custom_input = message.text
-    # Проста валідація, можна додати більш складну
     if " - " in custom_input and len(custom_input.split(" - ")) == 2:
         name, link = custom_input.split(" - ", 1)
-        # Додаємо психолога до словника для відображення в майбутньому (опціонально)
-        # PSYCHOLOGISTS[name] = link
         await state.update_data(chosen_psychologist=f"{name} - {link}")
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
@@ -107,26 +126,22 @@ async def process_custom_psychologist(message: Message, state: FSMContext):
     else:
         await message.answer("Будь ласка, введи ім'я та посилання на твого психолога у форматі: 'Ім'я Психолога - Посилання'.")
 
-# --- Обробник підтвердження/зміни вибору ---
 @dp.callback_query(F.data == "confirm_choice", CourseStates.waiting_for_final_confirmation)
 async def confirm_choice(callback_query: types.CallbackQuery, state: FSMContext):
     user_data = await state.get_data()
     chosen_psychologist = user_data.get("chosen_psychologist")
 
-    # Формуємо повідомлення для вас
     if chosen_psychologist in PSYCHOLOGISTS:
         psy_info_for_you = f"Дівчина обрала психолога: <a href='{PSYCHOLOGISTS[chosen_psychologist]}'>{chosen_psychologist}</a>"
-    else: # Це для "Мого варіанту"
+    else:
         psy_info_for_you = f"Дівчина обрала свого психолога: {chosen_psychologist}"
 
-    # Надсилаємо повідомлення вам
     await bot.send_message(chat_id=YOUR_TELEGRAM_CHAT_ID, text=psy_info_for_you, parse_mode=ParseMode.HTML)
 
-    # Тепер надсилаємо повідомлення дівчині
     await callback_query.message.edit_text(
         "Дякую за твій вибір! Інформація передана. Очікуй, будь ласка, подальших інструкцій."
     )
-    await state.clear() # Очищаємо стан після завершення процесу
+    await state.clear()
     await callback_query.answer()
 
 @dp.callback_query(F.data == "change_choice", CourseStates.waiting_for_final_confirmation)
@@ -143,10 +158,10 @@ async def change_choice(callback_query: types.CallbackQuery, state: FSMContext):
     await state.set_state(CourseStates.waiting_for_psychologist_choice)
     await callback_query.answer()
 
-
-# --- Запуск бота ---
+# --- Головна функція для запуску бота у режимі Webhook ---
 async def main():
-    await dp.start_polling(bot)
+    # Render надає змінну середовища PORT, яку ми маємо використовувати.
+    # Якщо PORT не встановлено (наприклад, при локальному запуску), використовуємо 8080 за замовчуванням.
+    port = int(os.environ.get("PORT", 8080))
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    # Встановлюємо webhook URL у Telegram. Це повідомляє Telegram, куди надсилати оновлення.
